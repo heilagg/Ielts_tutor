@@ -1,0 +1,396 @@
+// IELTS 7.5 Coach — data model
+// Default datasource is SQLite for zero-config local development.
+// For production, point DATABASE_URL at Postgres and change provider to "postgresql" —
+// the schema below uses only types supported by both.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Identity & profile ----------
+
+model User {
+  id        String   @id @default(cuid())
+  email     String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  profile        Profile?
+  studySessions  StudySession[]
+  dailyPlans     DailyPlan[]
+  taskAttempts   TaskAttempt[]
+  readingAttempts   ReadingAttempt[]
+  listeningAttempts ListeningAttempt[]
+  writingSubmissions WritingSubmission[]
+  speakingSessions  SpeakingSession[]
+  scoreHistory   ScoreHistory[]
+  errors         ErrorEntry[]
+  vocabulary     VocabularyEntry[]
+  grammarTopics  GrammarTopicProgress[]
+  mockExams      MockExam[]
+  progressMetrics ProgressMetric[]
+  chatMessages   ChatMessage[]
+  aiUsageLogs    AiUsageLog[]
+  stats          UserStats?
+  achievements   Achievement[]
+  weeklyReports  WeeklyReport[]
+  monthlyReports MonthlyReport[]
+}
+
+model Profile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  examType        String   @default("ACADEMIC") // ACADEMIC | GENERAL_TRAINING
+  targetOverall   Float    @default(7.5)
+  targetListening Float    @default(7.5)
+  targetReading   Float    @default(7.5)
+  targetWriting   Float    @default(7.0)
+  targetSpeaking  Float    @default(7.0)
+  examDate        DateTime?
+  selfEstimatedLevel String? // e.g. "B2", "unsure"
+  minutesPerDay   Int      @default(75)
+  studyDays       String   @default("[]") // JSON array of weekday ints 0-6
+  planMonths      Int      @default(6)
+
+  onboardingComplete Boolean @default(false)
+  diagnosticComplete Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------- Study sessions & plans ----------
+
+model StudySession {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startedAt DateTime @default(now())
+  endedAt   DateTime?
+  minutes   Int?
+  mode      String   @default("STUDY") // STUDY | EXAM
+}
+
+model DailyPlan {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date      DateTime // day this plan is for (date only, stored at midnight)
+  rationale String   // human-readable "why today" explanation
+  status    String   @default("PENDING") // PENDING | IN_PROGRESS | DONE | SKIPPED
+  createdAt DateTime @default(now())
+
+  tasks Task[]
+
+  @@unique([userId, date])
+}
+
+model Task {
+  id          String   @id @default(cuid())
+  dailyPlanId String?
+  dailyPlan   DailyPlan? @relation(fields: [dailyPlanId], references: [id], onDelete: Cascade)
+  userId      String
+
+  skill       String   // READING | LISTENING | WRITING | SPEAKING | VOCAB | GRAMMAR
+  subskill    String?  // e.g. "True/False/Not Given", "Task 2 Opinion"
+  difficulty  String   @default("MEDIUM") // EASY | MEDIUM | HARD
+  title       String
+  purpose     String   // why this task was assigned
+  mode        String   @default("STUDY") // STUDY | EXAM
+  sourceLabel String   @default("AI_GENERATED_IELTS_STYLE") // OFFICIAL | PROFESSIONAL | AI_GENERATED_IELTS_STYLE
+  sourceUrl   String?
+  payload     String   // JSON blob: generated content (passage, questions, prompts, etc.)
+  status      String   @default("PENDING") // PENDING | DONE | SKIPPED
+  createdAt   DateTime @default(now())
+
+  attempts TaskAttempt[]
+}
+
+model TaskAttempt {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  skill      String
+  score      Float?
+  bandEstimate Float?
+  timeSpentSec Int?
+  mistakes   String? // JSON
+  createdAt  DateTime @default(now())
+}
+
+// ---------- Reading ----------
+
+model ReadingAttempt {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind        String   @default("DIAGNOSTIC") // DIAGNOSTIC | PRACTICE | WEEKLY_MOCK | MONTHLY_MOCK
+  mode        String   @default("EXAM")
+  sourceLabel String   @default("AI_GENERATED_IELTS_STYLE")
+  passages    String   // JSON: 3 passages + questions + answer key
+  answers     String?  // JSON: user's submitted answers
+  rawScore    Int?     // out of 40
+  band        Float?
+  accuracyByType String? // JSON
+  timeSpentSec Int?
+  unanswered  Int?
+  startedAt   DateTime @default(now())
+  submittedAt DateTime?
+}
+
+// ---------- Listening ----------
+
+model ListeningAttempt {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind        String   @default("DIAGNOSTIC")
+  mode        String   @default("EXAM")
+  sourceLabel String   @default("AI_GENERATED_IELTS_STYLE")
+  sections    String   // JSON: 4 sections with scripts, questions, answer key
+  answers     String?
+  rawScore    Int?
+  band        Float?
+  accuracyByType String?
+  timeSpentSec Int?
+  unanswered  Int?
+  startedAt   DateTime @default(now())
+  submittedAt DateTime?
+}
+
+// ---------- Writing ----------
+
+model WritingSubmission {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  taskType    String   // TASK1 | TASK2
+  kind        String   @default("DIAGNOSTIC")
+  mode        String   @default("EXAM")
+  prompt      String   // JSON: prompt text + visual data if TASK1
+  essayText   String
+  wordCount   Int
+  timeSpentSec Int?
+
+  taskAchievement Float? // TA (task1) or TR (task2), same field
+  coherenceCohesion Float?
+  lexicalResource Float?
+  grammaticalRange Float?
+  overallBand     Float?
+
+  strengths   String? // JSON array
+  problems    String? // JSON array
+  corrections String? // JSON array of {original, problem, explanation, improved, rule, example}
+
+  createdAt   DateTime @default(now())
+}
+
+// ---------- Speaking ----------
+
+model SpeakingSession {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind      String   @default("DIAGNOSTIC")
+  mode      String   @default("EXAM")
+  parts     String   // JSON: part1/2/3 questions + transcripts
+
+  fluencyCoherence Float?
+  lexicalResource  Float?
+  grammaticalRange Float?
+  pronunciation    Float?
+  overallBand      Float?
+
+  feedback  String?  // JSON
+  metrics   String?  // JSON: hesitation, fillers, wpm, ttr etc.
+
+  createdAt DateTime @default(now())
+}
+
+// ---------- Scores & progress ----------
+
+model ScoreHistory {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill     String   // READING | LISTENING | WRITING | SPEAKING | OVERALL
+  band      Float
+  source    String   // DIAGNOSTIC | PRACTICE | WEEKLY_MOCK | MONTHLY_MOCK
+  refId     String?  // id of the attempt/submission/session that produced this
+  createdAt DateTime @default(now())
+}
+
+model ProgressMetric {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  metric    String   // e.g. "estimated_overall", "readiness_probability"
+  value     Float
+  createdAt DateTime @default(now())
+}
+
+// ---------- Errors, vocab, grammar ----------
+
+model ErrorEntry {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  skill      String   // WRITING | SPEAKING | READING | LISTENING | GRAMMAR
+  category   String   // e.g. "articles", "True/False/Not Given", "collocation"
+  original   String
+  corrected  String
+  explanation String
+  severity   String   @default("MEDIUM") // LOW | MEDIUM | HIGH
+  frequency  Int      @default(1)
+  masteryStatus String @default("ACTIVE") // ACTIVE | IMPROVING | MASTERED
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  // Spaced-repetition scheduling (SM-2) for the flashcard review queue.
+  repetitionCount Int      @default(0)
+  easeFactor      Float    @default(2.5)
+  intervalDays    Int      @default(0)
+  dueAt           DateTime @default(now())
+}
+
+model VocabularyEntry {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  word         String
+  definition   String
+  pronunciation String?
+  partOfSpeech String?
+  collocations String? // JSON array
+  synonyms     String? // JSON array
+  antonyms     String? // JSON array
+  example      String?
+  userExample  String?
+  topic        String?
+  mastery      String  @default("NEW") // NEW | LEARNING | MASTERED
+  createdAt    DateTime @default(now())
+  lastReviewedAt DateTime?
+}
+
+model GrammarTopicProgress {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  topic     String   // articles | prepositions | tenses | ...
+  errorCount Int     @default(0)
+  masteryStatus String @default("ACTIVE") // ACTIVE | IMPROVING | MASTERED
+  lastPracticedAt DateTime?
+}
+
+// ---------- Mocks ----------
+
+model MockExam {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind      String   // WEEKLY_FULL | WEEKLY_RL | WEEKLY_WS | WEEKLY_TARGETED | MONTHLY_FULL
+  skillsIncluded String // JSON array
+  overallBand Float?
+  readingBand Float?
+  listeningBand Float?
+  writingBand Float?
+  speakingBand Float?
+  startedAt DateTime @default(now())
+  completedAt DateTime?
+}
+
+// ---------- AI tutor chat ----------
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String   // user | assistant
+  content   String
+  createdAt DateTime @default(now())
+}
+
+// ---------- AI cost/usage tracking (section 62-63) ----------
+
+model AiUsageLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  feature      String  // e.g. "writing_evaluate", "reading_generate", "tutor_chat"
+  tier         String  // STRONG | BALANCED | FAST
+  model        String
+  inputTokens  Int
+  outputTokens Int
+  estimatedCostUsd Float
+  createdAt    DateTime @default(now())
+}
+
+// ---------- Gamification (lightweight, non-primary — section 35-36) ----------
+
+model UserStats {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  xp             Int      @default(0)
+  currentStreak  Int      @default(0)
+  longestStreak  Int      @default(0)
+  lastStudyDate  DateTime?
+  updatedAt      DateTime @updatedAt
+}
+
+model Achievement {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  key         String   // stable slug, e.g. "first_mock", "writing_x10"
+  title       String
+  description String
+  unlockedAt  DateTime @default(now())
+
+  @@unique([userId, key])
+}
+
+// ---------- Reviews (section 37-38) ----------
+
+model WeeklyReport {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weekStart DateTime // Monday 00:00 of the reported week
+  summary   String   // JSON: full structured report + narrative
+  createdAt DateTime @default(now())
+
+  @@unique([userId, weekStart])
+}
+
+model MonthlyReport {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  monthStart DateTime // 1st of the reported month, 00:00
+  summary    String   // JSON: full structured report + narrative
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, monthStart])
+}
